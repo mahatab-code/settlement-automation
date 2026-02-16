@@ -3,7 +3,6 @@
 import os
 import time
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -14,12 +13,15 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # =========================
-# LOAD ENV
+# DIRECT LOGIN CREDENTIALS
 # =========================
-load_dotenv()
 
-EMAIL = os.getenv("COMPANY_EMAIL")
-PASSWORD = os.getenv("COMPANY_PASSWORD")
+EMAIL = "mahatab@shurjomukhi.com.bd"
+PASSWORD = "Nokia6600&*(%$"
+
+if not EMAIL or not PASSWORD:
+    raise Exception("❌ Email or Password not set in script")
+
 
 LOGIN_URL = "https://admin.shurjopayment.com/"
 SETTLEMENT_DAY_URL = "https://admin.shurjopayment.com/spadmin/merchant/settlement-day"
@@ -155,3 +157,4 @@ except Exception as e:
 
 finally:
     driver.quit()
+
