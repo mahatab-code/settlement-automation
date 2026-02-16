@@ -1,12 +1,12 @@
 name: Daily Settlement Automation
 
 on:
-  schedule:
-    - cron: '0 19 * * *'   # 1:00 AM Bangladesh Time (UTC+6)
   workflow_dispatch:
+  schedule:
+    - cron: '0 19 * * *'   # 1:00 AM Bangladesh Time (UTC 19:00)
 
 jobs:
-  run-script:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,17 +20,17 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Install Google Chrome
         run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          sudo apt update
+          sudo apt install -y google-chrome-stable
 
-      - name: Run Script
+      - name: Run Download Script
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMPANY_EMAIL: ${{ secrets.COMPANY_EMAIL }}
           COMPANY_PASSWORD: ${{ secrets.COMPANY_PASSWORD }}
         run: |
-          python main.py
+          python day.py
