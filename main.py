@@ -60,18 +60,26 @@ logger.addHandler(console_handler)
 logger.info("Logging configured — daily rotation, 30-day retention")
 
 # ─────────────────────── DB HELPERS ───────────────────────────────
-def get_mysql_engine():
-    return create_engine("mysql+pymysql://root:@localhost/merbankinfo?charset=utf8mb4")
+def get_db_engine():
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL not set")
+
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+    return create_engine(db_url, pool_pre_ping=True)
+
 
 def read_data_from_db():
-    with get_mysql_engine().begin() as conn:
+    with get_db_engine().begin() as conn:
         df = pd.read_sql("SELECT * FROM settlement_day", conn)
     logger.info("Loaded %s rows from settlement_day", len(df))
     return df
 
 def update_from_date_in_db(record_id:int, new_date:str):
     new_dt = datetime.strptime(new_date, "%d/%m/%Y").date()
-    with get_mysql_engine().begin() as conn:
+    with get_db_engine().begin() as conn:
         conn.execute(
             text("UPDATE settlement_day SET from_date=:d WHERE id=:i"),
             {"d": new_dt, "i": record_id}
@@ -524,4 +532,5 @@ def main():
         logger.info("Browser closed.")
 
 if __name__ == "__main__":
+
     main()
