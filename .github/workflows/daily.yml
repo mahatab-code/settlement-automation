@@ -20,17 +20,19 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Google Chrome
+      # Chrome already থাকে ubuntu-latest এ,
+      # কিন্তু stability জন্য verify করা ভালো
+      - name: Verify Chrome Installation
         run: |
-          sudo apt update
-          sudo apt install -y google-chrome-stable
+          google-chrome --version || true
 
-      - name: Run Download Script
+      - name: Run day.py (Test Mode)
         env:
           COMPANY_EMAIL: ${{ secrets.COMPANY_EMAIL }}
           COMPANY_PASSWORD: ${{ secrets.COMPANY_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python day.py
