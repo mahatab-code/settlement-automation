@@ -10,36 +10,16 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 
-# =========================
-# CHROME OPTIONS (GitHub Safe)
-# =========================
-options = Options()
-options.add_argument("--headless=new")
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-options.add_argument("--window-size=1920,1080")
-options.add_argument("--disable-gpu")
-options.add_argument("--remote-debugging-port=9222")
 
-driver = webdriver.Chrome(options=options)
-wait = WebDriverWait(driver, 30)
 # =========================
 # DIRECT LOGIN CREDENTIALS
 # =========================
-
 EMAIL = "mahatab@shurjomukhi.com.bd"
 PASSWORD = "Nokia6600&*(%$"
-
-if not EMAIL or not PASSWORD:
-    raise Exception("❌ Email or Password not set in script")
-
 
 LOGIN_URL = "https://admin.shurjopayment.com/"
 SETTLEMENT_DAY_URL = "https://admin.shurjopayment.com/spadmin/merchant/settlement-day"
 TRX_REPORT_URL = "https://admin.shurjopayment.com/spadmin/report/merchant-daily-trx"
-
-DOWNLOAD_DIR = os.path.abspath("downloads")
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # =========================
 # DATE CONFIG
@@ -48,13 +28,21 @@ today_day = datetime.now().strftime("%A")
 yesterday = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
 
 # =========================
-# DRIVER SETUP
+# DOWNLOAD DIRECTORY
+# =========================
+DOWNLOAD_DIR = os.path.abspath("downloads")
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# =========================
+# CHROME OPTIONS (GitHub Safe)
 # =========================
 options = Options()
 options.add_argument("--headless=new")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1920,1080")
+options.add_argument("--remote-debugging-port=9222")
 
 prefs = {
     "download.default_directory": DOWNLOAD_DIR,
@@ -63,12 +51,9 @@ prefs = {
 }
 options.add_experimental_option("prefs", prefs)
 
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()),
-    options=options
-)
-
+driver = webdriver.Chrome(options=options)
 wait = WebDriverWait(driver, 30)
+
 
 try:
     # ============================================================
@@ -81,17 +66,16 @@ try:
     driver.find_element(By.ID, "password-field").send_keys(PASSWORD)
     driver.find_element(By.XPATH, "//button[@type='submit']").click()
 
-    wait.until(EC.url_changes(LOGIN_URL))
+    wait.until(EC.url_contains("/spadmin"))
     print("✅ Login successful")
 
     # ============================================================
-    # 1️⃣ DOWNLOAD SETTLEMENT DAY (CURRENT DAY)
+    # 1️⃣ SETTLEMENT DAY (CURRENT DAY)
     # ============================================================
     print("Downloading Settlement Day for:", today_day)
 
     driver.get(SETTLEMENT_DAY_URL)
 
-    # Select day
     wait.until(EC.element_to_be_clickable((By.ID, "select2-day-container"))).click()
 
     wait.until(
@@ -100,19 +84,16 @@ try:
         )
     ).click()
 
-    # Select ALL rows
     select_length = Select(
         wait.until(EC.presence_of_element_located((By.NAME, "withdraw_days_table_length")))
     )
     select_length.select_by_value("-1")
 
-    # Click search
     wait.until(EC.element_to_be_clickable((By.ID, "filter_search"))).click()
 
     print("Waiting 10 seconds for settlement table load...")
     time.sleep(10)
 
-    # Download Excel
     wait.until(
         EC.element_to_be_clickable(
             (By.XPATH, "//button[contains(@class,'buttons-excel')]")
@@ -120,37 +101,30 @@ try:
     ).click()
 
     print("📥 Settlement Day Excel Downloaded")
-
     time.sleep(5)
 
     # ============================================================
-    # 2️⃣ DOWNLOAD MERCHANT DAILY TRX (YESTERDAY DATE)
+    # 2️⃣ MERCHANT DAILY TRX (YESTERDAY)
     # ============================================================
     print("Downloading Merchant Daily TRX for:", yesterday)
 
     driver.get(TRX_REPORT_URL)
 
-    # Fill from date
     from_input = wait.until(EC.presence_of_element_located((By.ID, "fromDate")))
     from_input.clear()
     from_input.send_keys(yesterday)
 
-    # Fill to date
     to_input = driver.find_element(By.ID, "toDate")
     to_input.clear()
     to_input.send_keys(yesterday)
 
-    # Click search
     wait.until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//input[@id='filter_search']")
-        )
+        EC.element_to_be_clickable((By.ID, "filter_search"))
     ).click()
 
     print("Waiting 10 seconds for trx table load...")
     time.sleep(10)
 
-    # Download Excel
     wait.until(
         EC.element_to_be_clickable(
             (By.XPATH, "//button[contains(@class,'buttons-excel')]")
@@ -168,6 +142,3 @@ except Exception as e:
 
 finally:
     driver.quit()
-
-
-
