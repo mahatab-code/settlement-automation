@@ -16,9 +16,9 @@ from selenium.webdriver.support import expected_conditions as EC
 # =========================
 # ENV VARIABLES (GitHub Secrets)
 # =========================
-EMAIL = os.environ.get("mahatab@shurjomukhi.com.bd")
-PASSWORD = os.environ.get("Nokia6600&*(%$")
-DATABASE_URL = os.environ.get("postgresql://neondb_owner:npg_I3lEbum7ocvp@ep-ancient-meadow-aixe1nl8-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
+EMAIL = os.environ.get("Admin_Email")
+PASSWORD = os.environ.get("Admin_passoword")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not EMAIL or not PASSWORD or not DATABASE_URL:
     raise Exception("Missing environment variables")
@@ -247,3 +247,4 @@ update_settlement_excel(settlement_file)
 activate_default_stores(trx_file)
 
 print("All processes completed successfully")
+
