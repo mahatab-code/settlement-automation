@@ -2,7 +2,10 @@
 
 import os
 import time
+import re
+import pandas as pd
 from datetime import datetime, timedelta
+from sqlalchemy import create_engine, text
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -10,31 +13,30 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 
+# =========================
+# ENV VARIABLES (GitHub Secrets)
+# =========================
+EMAIL = os.environ.get("mahatab@shurjomukhi.com.bd")
+PASSWORD = os.environ.get("Nokia6600&*(%$")
+DATABASE_URL = os.environ.get("postgresql://neondb_owner:npg_I3lEbum7ocvp@ep-ancient-meadow-aixe1nl8-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
 
-# =========================
-# DIRECT LOGIN CREDENTIALS
-# =========================
-EMAIL = "mahatab@shurjomukhi.com.bd"
-PASSWORD = "Nokia6600&*(%$"
+if not EMAIL or not PASSWORD or not DATABASE_URL:
+    raise Exception("Missing environment variables")
+
+engine = create_engine(DATABASE_URL)
 
 LOGIN_URL = "https://admin.shurjopayment.com/"
 SETTLEMENT_DAY_URL = "https://admin.shurjopayment.com/spadmin/merchant/settlement-day"
 TRX_REPORT_URL = "https://admin.shurjopayment.com/spadmin/report/merchant-daily-trx"
 
-# =========================
-# DATE CONFIG
-# =========================
 today_day = datetime.now().strftime("%A")
 yesterday = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
 
-# =========================
-# DOWNLOAD DIRECTORY
-# =========================
 DOWNLOAD_DIR = os.path.abspath("downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # =========================
-# CHROME OPTIONS (GitHub Safe)
+# CHROME OPTIONS
 # =========================
 options = Options()
 options.add_argument("--headless=new")
@@ -42,12 +44,10 @@ options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1920,1080")
-options.add_argument("--remote-debugging-port=9222")
 
 prefs = {
     "download.default_directory": DOWNLOAD_DIR,
     "download.prompt_for_download": False,
-    "download.directory_upgrade": True,
 }
 options.add_experimental_option("prefs", prefs)
 
@@ -55,11 +55,145 @@ driver = webdriver.Chrome(options=options)
 wait = WebDriverWait(driver, 30)
 
 
+# =========================
+# HELPER FUNCTIONS
+# =========================
+def parse_days(text):
+    days = {
+        "Monday":"","Tuesday":"","Wednesday":"",
+        "Thursday":"","Friday":"","Saturday":"","Sunday":""
+    }
+    clean = re.sub(r"\(.*?\)", "", str(text))
+    for d in clean.split(","):
+        d = d.strip()
+        if d in days:
+            days[d] = "✓"
+    return days
+
+
+def clear_day_columns():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE settlement_day
+            SET "Monday"='',
+                "Tuesday"='',
+                "Wednesday"='',
+                "Thursday"='',
+                "Friday"='',
+                "Saturday"='',
+                "Sunday"='';
+        """))
+
+
+def update_settlement_excel(file_path):
+    df = pd.read_excel(file_path)
+
+    clear_day_columns()
+
+    with engine.begin() as conn:
+        for _, row in df.iterrows():
+            merchant = str(row["Merchant"]).strip()
+            store = str(row["Store"]).strip()
+            withdraw = row["Withdraw Days"]
+
+            days = parse_days(withdraw)
+
+            result = conn.execute(text("""
+                SELECT id FROM settlement_day
+                WHERE LOWER(merchant_name)=LOWER(:m)
+                AND LOWER(store_name)=LOWER(:s)
+            """), {"m":merchant, "s":store}).fetchone()
+
+            if result:
+                conn.execute(text("""
+                    UPDATE settlement_day
+                    SET "Monday"=:mon,
+                        "Tuesday"=:tue,
+                        "Wednesday"=:wed,
+                        "Thursday"=:thu,
+                        "Friday"=:fri,
+                        "Saturday"=:sat,
+                        "Sunday"=:sun,
+                        updated_at=NOW()
+                    WHERE LOWER(merchant_name)=LOWER(:m)
+                    AND LOWER(store_name)=LOWER(:s)
+                """), {
+                    "m":merchant, "s":store,
+                    "mon":days["Monday"],
+                    "tue":days["Tuesday"],
+                    "wed":days["Wednesday"],
+                    "thu":days["Thursday"],
+                    "fri":days["Friday"],
+                    "sat":days["Saturday"],
+                    "sun":days["Sunday"]
+                })
+            else:
+                conn.execute(text("""
+                    INSERT INTO settlement_day
+                    (merchant_name, store_name, from_date,
+                     "Monday","Tuesday","Wednesday",
+                     "Thursday","Friday","Saturday","Sunday",
+                     is_default_date)
+                    VALUES
+                    (:m,:s,'2030-01-01',
+                     :mon,:tue,:wed,:thu,:fri,:sat,:sun,1)
+                """), {
+                    "m":merchant, "s":store,
+                    "mon":days["Monday"],
+                    "tue":days["Tuesday"],
+                    "wed":days["Wednesday"],
+                    "thu":days["Thursday"],
+                    "fri":days["Friday"],
+                    "sat":days["Saturday"],
+                    "sun":days["Sunday"]
+                })
+
+
+def activate_default_stores(trx_file):
+    df = pd.read_excel(trx_file)
+
+    df["Merchant Name"] = df["Merchant Name"].str.strip().str.lower()
+    df["Store Name"] = df["Store Name"].str.strip().str.lower()
+
+    with engine.begin() as conn:
+
+        default_rows = conn.execute(text("""
+            SELECT merchant_name, store_name
+            FROM settlement_day
+            WHERE from_date='2030-01-01'
+            AND is_default_date=1
+        """)).fetchall()
+
+        for merchant, store in default_rows:
+            m = merchant.strip().lower()
+            s = store.strip().lower()
+
+            match = df[
+                (df["Merchant Name"] == m) &
+                (df["Store Name"] == s)
+            ]
+
+            if not match.empty:
+                trx_date = pd.to_datetime(match.iloc[0]["Date"]).date()
+
+                conn.execute(text("""
+                    UPDATE settlement_day
+                    SET from_date=:d,
+                        is_default_date=0,
+                        updated_at=NOW()
+                    WHERE LOWER(merchant_name)=LOWER(:m)
+                    AND LOWER(store_name)=LOWER(:s)
+                    AND from_date='2030-01-01'
+                """), {"d":trx_date, "m":merchant, "s":store})
+
+                print(f"Activated store: {merchant} - {store}")
+
+
+# =========================
+# MAIN PROCESS
+# =========================
 try:
-    # ============================================================
-    # LOGIN
-    # ============================================================
-    print("Opening login page...")
+    print("Logging in...")
     driver.get(LOGIN_URL)
 
     wait.until(EC.presence_of_element_located((By.ID, "email"))).send_keys(EMAIL)
@@ -67,78 +201,49 @@ try:
     driver.find_element(By.XPATH, "//button[@type='submit']").click()
 
     wait.until(EC.url_contains("/spadmin"))
-    print("✅ Login successful")
+    print("Login successful")
 
-    # ============================================================
-    # 1️⃣ SETTLEMENT DAY (CURRENT DAY)
-    # ============================================================
-    print("Downloading Settlement Day for:", today_day)
-
+    # Settlement Day
     driver.get(SETTLEMENT_DAY_URL)
-
     wait.until(EC.element_to_be_clickable((By.ID, "select2-day-container"))).click()
+    wait.until(EC.element_to_be_clickable(
+        (By.XPATH, f"//li[text()='{today_day}']"))).click()
 
-    wait.until(
-        EC.element_to_be_clickable(
-            (By.XPATH, f"//li[contains(@class,'select2-results__option') and text()='{today_day}']")
-        )
-    ).click()
+    Select(wait.until(
+        EC.presence_of_element_located((By.NAME, "withdraw_days_table_length"))
+    )).select_by_value("-1")
 
-    select_length = Select(
-        wait.until(EC.presence_of_element_located((By.NAME, "withdraw_days_table_length")))
-    )
-    select_length.select_by_value("-1")
-
-    wait.until(EC.element_to_be_clickable((By.ID, "filter_search"))).click()
-
-    print("Waiting 10 seconds for settlement table load...")
+    driver.find_element(By.ID, "filter_search").click()
     time.sleep(10)
-
-    wait.until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//button[contains(@class,'buttons-excel')]")
-        )
-    ).click()
-
-    print("📥 Settlement Day Excel Downloaded")
+    driver.find_element(By.XPATH, "//button[contains(@class,'buttons-excel')]").click()
     time.sleep(5)
 
-    # ============================================================
-    # 2️⃣ MERCHANT DAILY TRX (YESTERDAY)
-    # ============================================================
-    print("Downloading Merchant Daily TRX for:", yesterday)
-
+    # TRX
     driver.get(TRX_REPORT_URL)
-
-    from_input = wait.until(EC.presence_of_element_located((By.ID, "fromDate")))
-    from_input.clear()
-    from_input.send_keys(yesterday)
-
-    to_input = driver.find_element(By.ID, "toDate")
-    to_input.clear()
-    to_input.send_keys(yesterday)
-
-    wait.until(
-        EC.element_to_be_clickable((By.ID, "filter_search"))
-    ).click()
-
-    print("Waiting 10 seconds for trx table load...")
+    wait.until(EC.presence_of_element_located((By.ID, "fromDate"))).send_keys(yesterday)
+    driver.find_element(By.ID, "toDate").send_keys(yesterday)
+    driver.find_element(By.ID, "filter_search").click()
     time.sleep(10)
-
-    wait.until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//button[contains(@class,'buttons-excel')]")
-        )
-    ).click()
-
-    print("📥 Merchant Daily TRX Excel Downloaded")
-
+    driver.find_element(By.XPATH, "//button[contains(@class,'buttons-excel')]").click()
     time.sleep(5)
 
-    print("✅ Both downloads completed successfully!")
-
-except Exception as e:
-    print("❌ Error occurred:", e)
+    print("Download complete")
 
 finally:
     driver.quit()
+
+# =========================
+# PROCESS FILES
+# =========================
+files = sorted(
+    [os.path.join(DOWNLOAD_DIR, f) for f in os.listdir(DOWNLOAD_DIR)],
+    key=os.path.getctime
+)
+
+settlement_file = files[-2]
+trx_file = files[-1]
+
+update_settlement_excel(settlement_file)
+activate_default_stores(trx_file)
+
+print("All processes completed successfully")
