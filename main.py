@@ -33,7 +33,6 @@ engine = create_engine(DATABASE_URL)
 
 LOGIN_URL = "https://admin.shurjopayment.com/login"
 SETTLEMENT_CREATE_URL = "https://admin.shurjopayment.com/accounts/settlement/create"
-SETTLEMENT_LIST_URL = "https://admin.shurjopayment.com/accounts/settlement"  # URL after successful creation
 TIMEOUT = 120
 TICK_INDICATORS = {"x","X","✔","✓","1","TRUE","True","true",True}
 
@@ -127,7 +126,7 @@ def update_from_date(record_id):
 
 
 # =========================
-# SELENIUM STEPS (Store name only)
+# SELENIUM STEPS
 # =========================
 def perform_login(driver, wait):
     """Login and open settlement page in new tab"""
@@ -193,7 +192,7 @@ def get_available_stores(driver, wait):
 
 
 def select_store_by_name(driver, wait, store_name):
-    """Select store by name only (no ID fallback)"""
+    """Select store by name only"""
     logger.info(f"Attempting to select store by name: '{store_name}'")
     
     # Get all available stores
@@ -205,7 +204,7 @@ def select_store_by_name(driver, wait, store_name):
     
     # Log available stores for debugging
     logger.info(f"Available stores ({len(available_stores)}):")
-    for i, store in enumerate(available_stores[:10]):  # Show first 10
+    for i, store in enumerate(available_stores[:10]):
         logger.info(f"  {i+1}. '{store['text']}' (value: {store['value']})")
     if len(available_stores) > 10:
         logger.info(f"  ... and {len(available_stores) - 10} more")
@@ -221,7 +220,7 @@ def select_store_by_name(driver, wait, store_name):
             select.select_by_visible_text(store['text'])
             return True
     
-    # Try partial match (if store name contains the text)
+    # Try partial match
     for store in available_stores:
         if store_name_clean in store['text'].strip().lower():
             logger.info(f"Found partial match: '{store['text']}' contains '{store_name}'")
@@ -245,70 +244,91 @@ def enter_dates(driver, wait, from_d, to_d):
 
 
 def submit_and_verify_settlement(driver, wait, original_url):
-    """Submit the settlement form and verify it was actually created"""
+    """Submit the settlement form and verify result based on popup type"""
     logger.info("Clicking create settlement button...")
     
     # Click the create button
     submit_btn = wait.until(EC.element_to_be_clickable((By.ID, "create_settlement")))
     submit_btn.click()
     
-    # Wait for possible redirect (settlement list page)
-    logger.info("Waiting for redirect to settlement list page...")
-    time.sleep(5)
+    # Wait for response (popup or redirect)
+    logger.info("Waiting for response...")
+    time.sleep(8)  # Wait for popup to appear
     
-    # Check if redirected to settlement list
-    current_url = driver.current_url
-    if SETTLEMENT_LIST_URL in current_url or "settlement" in current_url and "create" not in current_url:
-        logger.info(f"✅ Redirected to settlement list: {current_url}")
-        return True
-    
-    # Check for success alert/message
+    # ===== STEP 1: Check for Warning Popup (No Transactions) =====
     try:
-        # Look for SweetAlert success message
-        success_alert = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-popup')]//div[contains(text(), 'success') or contains(text(), 'Success')]")
-        if success_alert:
-            logger.info("✅ Success alert found")
-            # Click OK button on alert
+        # Check for warning icon (swal2-icon-warning)
+        warning_popup = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon-warning')]")
+        if warning_popup:
+            logger.info("Warning popup detected - checking message...")
+            
+            # Check for "No Transactions" or "No eligible transactions" text
+            no_transaction_text = driver.find_elements(By.XPATH, 
+                "//*[contains(text(), 'No Transactions') or contains(text(), 'No eligible transactions')]")
+            
+            if no_transaction_text:
+                logger.info("ℹ️ No eligible transactions warning popup found")
+                
+                # Click OK button to dismiss popup
+                try:
+                    ok_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'OK')]")
+                    ok_btn.click()
+                    time.sleep(2)
+                    logger.info("Popup dismissed")
+                except Exception as e:
+                    logger.warning(f"Could not click OK button: {str(e)}")
+                
+                return "no_eligible"  # নির্দিষ্টভাবে no eligible transactions
+    except Exception as e:
+        logger.debug(f"No warning popup found: {str(e)}")
+    
+    # ===== STEP 2: Check for Success Popup =====
+    try:
+        # Check for success icon (swal2-icon-success)
+        success_popup = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon-success')]")
+        if success_popup:
+            logger.info("✅ Success popup detected")
+            
+            # Click OK button
             try:
-                ok_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'OK') or contains(text(), 'Ok')]")
+                ok_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'OK')]")
                 ok_btn.click()
                 time.sleep(2)
             except:
                 pass
-            return True
-    except:
-        pass
+            
+            return "success"
+    except Exception as e:
+        logger.debug(f"No success popup found: {str(e)}")
     
-    # Check for any success message on the page
+    # ===== STEP 3: Check for Redirect to Different Page =====
+    current_url = driver.current_url
+    if current_url != original_url:
+        # Make sure it's not the same create page
+        if "create" not in current_url:
+            logger.info(f"✅ Redirected to different page: {current_url}")
+            return "success"
+        else:
+            logger.info(f"Returned to same create page: {current_url}")
+    
+    # ===== STEP 4: Check for any alert =====
     try:
-        page_source = driver.page_source.lower()
-        if "success" in page_source and "created" in page_source:
-            logger.info("✅ Success message found in page")
-            return True
+        alert = driver.switch_to.alert
+        alert_text = alert.text
+        logger.info(f"Alert found: {alert_text}")
+        
+        if "no eligible" in alert_text.lower() or "no transaction" in alert_text.lower():
+            alert.accept()
+            return "no_eligible"
+        else:
+            alert.accept()
+            return "success"
     except:
         pass
     
-    # If still on create page, check if form was reset (another indicator of success)
-    try:
-        from_date_field = driver.find_element(By.ID, "fromDate")
-        if from_date_field.get_attribute("value") == "":
-            logger.info("✅ Form was reset - likely successful submission")
-            return True
-    except:
-        pass
-    
-    # Check for "No eligible transactions" message
-    try:
-        no_eligible = driver.find_element(By.XPATH, "//*[contains(text(), 'No eligible transactions')]")
-        if no_eligible:
-            logger.info("ℹ️ No eligible transactions found")
-            return False
-    except:
-        pass
-    
-    # If we're still here, we need to check manually
-    logger.warning("⚠️ Could not verify if settlement was created. Manual check recommended.")
-    return None  # None means uncertain
+    # ===== STEP 5: If we're here, result is uncertain =====
+    logger.warning("⚠️ Could not determine result - manual check required")
+    return "uncertain"
 
 
 def navigate_back_to_settlement_page(driver, wait):
@@ -319,7 +339,7 @@ def navigate_back_to_settlement_page(driver, wait):
             logger.info("Navigating back to settlement page (attempt %s/%s)", attempt + 1, max_retries)
             driver.get(SETTLEMENT_CREATE_URL)
             wait.until(EC.presence_of_element_located((By.ID, "select2-merchant_id-container")))
-            time.sleep(2)  # Wait for page to fully load
+            time.sleep(2)
             return True
         except Exception as nav_error:
             logger.warning("Navigation attempt %s failed: %s", attempt + 1, nav_error)
@@ -349,7 +369,7 @@ def main():
         'errors': 0
     }
     
-    # Track processed stores for reporting
+    # Track stores for reporting
     confirmed_stores = []
     no_eligible_stores = []
     uncertain_stores = []
@@ -407,7 +427,7 @@ def main():
                 # Wait for store dropdown to populate
                 time.sleep(2)
                 
-                # Select store by name only
+                # Select store by name
                 store_selected = select_store_by_name(driver, wait, store_name)
                 
                 if not store_selected:
@@ -423,16 +443,16 @@ def main():
                 # Submit and verify settlement creation
                 result = submit_and_verify_settlement(driver, wait, original_url)
                 
-                if result is True:  # Confirmed success
+                if result == "success":
                     update_from_date(row["id"])
                     stats['confirmed_success'] += 1
                     confirmed_stores.append(f"{merchant_name} - {store_name}")
                     logger.info(f"✅ CONFIRMED SUCCESS: {merchant_name} - {store_name}")
-                elif result is False:  # No eligible transactions
+                elif result == "no_eligible":
                     stats['no_eligible'] += 1
                     no_eligible_stores.append(f"{merchant_name} - {store_name}")
                     logger.info(f"ℹ️ No eligible transactions for {merchant_name} - {store_name}")
-                else:  # Uncertain - manual check needed
+                else:  # uncertain
                     stats['uncertain'] += 1
                     uncertain_stores.append(f"{merchant_name} - {store_name}")
                     logger.warning(f"⚠️ UNCERTAIN - Manual check required: {merchant_name} - {store_name}")
@@ -493,6 +513,8 @@ def main():
             logger.info("⚠️ RECOMMENDATION: Please manually check the {0} uncertain settlements in the ShurjoPay admin panel.".format(stats['uncertain']))
         if stats['confirmed_success'] > 0:
             logger.info("✅ {0} settlements were successfully created.".format(stats['confirmed_success']))
+        if stats['no_eligible'] > 0:
+            logger.info("ℹ️ {0} merchants had no eligible transactions.".format(stats['no_eligible']))
         logger.info("=" * 60)
 
     except Exception as e:
