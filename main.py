@@ -126,7 +126,7 @@ def update_from_date(record_id):
 
 
 # =========================
-# SELENIUM STEPS (from working script)
+# SELENIUM STEPS (Store name only)
 # =========================
 def perform_login(driver, wait):
     """Login and open settlement page in new tab"""
@@ -151,50 +151,84 @@ def perform_login(driver, wait):
     logger.info("Login successful & settlement page opened")
 
 
-def select_merchant(driver, wait, name):
+def select_merchant(driver, wait, merchant_name):
     """Select merchant from dropdown"""
+    logger.info(f"Selecting merchant: {merchant_name}")
     wait.until(EC.element_to_be_clickable((By.ID, "select2-merchant_id-container"))).click()
     box = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input.select2-search__field")))
     box.clear()
-    box.send_keys(name)
-    time.sleep(1)
-    wait.until(
-        EC.element_to_be_clickable(
-            (By.XPATH, f"//li[contains(@class,'select2-results__option') and text()='{name}']")
-        )
-    ).click()
-
-
-def select_store(driver, wait, store_name, store_id):
-    """
-    Select store by name first, if not available fall back to store ID
-    """
-    store_select = wait.until(EC.element_to_be_clickable((By.ID, "store_id")))
-    select = Select(store_select)
+    box.send_keys(merchant_name)
+    time.sleep(2)
     
-    # First try to find by store name
-    store_name_clean = str(store_name).strip()
-    if store_name_clean and store_name_clean.lower() not in ['nan', 'none', '']:
+    try:
+        wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, f"//li[contains(@class,'select2-results__option') and text()='{merchant_name}']")
+            )
+        ).click()
+        logger.info(f"Merchant selected: {merchant_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Could not select merchant {merchant_name}: {str(e)}")
+        return False
+
+
+def get_available_stores(driver, wait):
+    """Get all available store options from dropdown"""
+    try:
+        store_select = wait.until(EC.element_to_be_clickable((By.ID, "store_id")))
+        select = Select(store_select)
+        options = []
         for option in select.options:
-            if option.text.strip() == store_name_clean:
-                option.click()
-                logger.info("Store selected by name: %s", store_name_clean)
-                return True
-        
-        logger.warning("Store name '%s' not found in dropdown, falling back to store ID", store_name_clean)
+            if option.text.strip() and option.text.strip().lower() not in ['select store', '']:
+                options.append({
+                    'text': option.text.strip(),
+                    'value': option.get_attribute('value')
+                })
+        return options
+    except Exception as e:
+        logger.error(f"Error getting store options: {str(e)}")
+        return []
+
+
+def select_store_by_name(driver, wait, store_name):
+    """Select store by name only (no ID fallback)"""
+    logger.info(f"Attempting to select store by name: '{store_name}'")
     
-    # Fall back to store ID
-    store_id_clean = str(store_id).strip()
-    if store_id_clean and store_id_clean.lower() not in ['nan', 'none', '']:
-        try:
-            select.select_by_value(store_id_clean)
-            logger.info("Store selected by ID: %s", store_id_clean)
+    # Get all available stores
+    available_stores = get_available_stores(driver, wait)
+    
+    if not available_stores:
+        logger.error("No stores available in dropdown")
+        return False
+    
+    # Log available stores for debugging
+    logger.info(f"Available stores ({len(available_stores)}):")
+    for i, store in enumerate(available_stores[:10]):  # Show first 10
+        logger.info(f"  {i+1}. '{store['text']}' (value: {store['value']})")
+    if len(available_stores) > 10:
+        logger.info(f"  ... and {len(available_stores) - 10} more")
+    
+    # Clean store name for comparison
+    store_name_clean = store_name.strip().lower()
+    
+    # Try exact match first
+    for store in available_stores:
+        if store['text'].strip().lower() == store_name_clean:
+            logger.info(f"Found exact match: '{store['text']}'")
+            select = Select(driver.find_element(By.ID, "store_id"))
+            select.select_by_visible_text(store['text'])
             return True
-        except NoSuchElementException:
-            logger.error("Store ID '%s' also not found in dropdown", store_id_clean)
-            return False
     
-    logger.error("Neither store name '%s' nor store ID '%s' found", store_name_clean, store_id_clean)
+    # Try partial match (if store name contains the text)
+    for store in available_stores:
+        if store_name_clean in store['text'].strip().lower():
+            logger.info(f"Found partial match: '{store['text']}' contains '{store_name}'")
+            select = Select(driver.find_element(By.ID, "store_id"))
+            select.select_by_visible_text(store['text'])
+            return True
+    
+    logger.error(f"Store '{store_name}' not found in dropdown")
     return False
 
 
@@ -216,23 +250,27 @@ def submit_form(driver, wait):
 
 def confirm_submission(driver, wait, original_url):
     """Check if submission was successful"""
-    cond = EC.any_of(
-        EC.url_changes(original_url),
-        EC.presence_of_element_located((By.XPATH, "//div[@id='swal2-html-container' and contains(text(),'No eligible transactions')]")),
-        EC.alert_is_present(),
-    )
-    WebDriverWait(driver, 120).until(cond)
-
-    if driver.current_url != original_url:
-        return True  # success
     try:
-        driver.switch_to.alert.accept()
-    except NoAlertPresentException:
+        cond = EC.any_of(
+            EC.url_changes(original_url),
+            EC.presence_of_element_located((By.XPATH, "//div[@id='swal2-html-container' and contains(text(),'No eligible transactions')]")),
+            EC.alert_is_present(),
+        )
+        WebDriverWait(driver, 120).until(cond)
+
+        if driver.current_url != original_url:
+            return True  # success
         try:
-            driver.find_element(By.XPATH, "//button[text()='OK']").click()
-        except NoSuchElementException:
-            pass
-    return False
+            driver.switch_to.alert.accept()
+        except NoAlertPresentException:
+            try:
+                driver.find_element(By.XPATH, "//button[text()='OK']").click()
+            except NoSuchElementException:
+                pass
+        return False
+    except Exception as e:
+        logger.warning(f"Error confirming submission: {str(e)}")
+        return False
 
 
 def navigate_back_to_settlement_page(driver, wait):
@@ -243,7 +281,7 @@ def navigate_back_to_settlement_page(driver, wait):
             logger.info("Navigating back to settlement page (attempt %s/%s)", attempt + 1, max_retries)
             driver.get(SETTLEMENT_CREATE_URL)
             wait.until(EC.presence_of_element_located((By.ID, "select2-merchant_id-container")))
-            time.sleep(0.8)
+            time.sleep(1)
             return True
         except Exception as nav_error:
             logger.warning("Navigation attempt %s failed: %s", attempt + 1, nav_error)
@@ -305,29 +343,37 @@ def main():
 
         # Process each merchant
         for index, row in df_today.iterrows():
-            merchant = str(row["merchant_name"]).strip()
-            store_id = str(row["store_id"]).strip()
+            merchant_name = str(row["merchant_name"]).strip()
             store_name = str(row["store_name"]).strip() if pd.notna(row["store_name"]) else ""
+            
+            logger.info(f"▶ PROCESSING ({index+1}/{len(df_today)}): {merchant_name}")
+            logger.info(f"Store name: '{store_name}'")
+            
             from_date = pd.to_datetime(row["from_date"]).strftime("%d/%m/%Y")
             to_date = get_bd_yesterday_str("%d/%m/%Y")
-
-            logger.info(f"▶ PROCESSING ({index+1}/{len(df_today)}): {merchant} (Store: '{store_name}', ID: {store_id})")
             logger.info(f"Date range: {from_date} to {to_date}")
 
             original_url = driver.current_url
             
             try:
                 # Select merchant
-                select_merchant(driver, wait, merchant)
-                wait.until(lambda d: len(Select(d.find_element(By.ID, "store_id")).options) > 1)
+                if not select_merchant(driver, wait, merchant_name):
+                    logger.error(f"Failed to select merchant: {merchant_name}")
+                    stats['errors'] += 1
+                    error_stores.append(f"{merchant_name} - Merchant not found")
+                    continue
                 
-                # Select store (prioritize store name)
-                store_selected = select_store(driver, wait, store_name, store_id)
+                # Wait for store dropdown to populate
+                time.sleep(2)
+                
+                # Select store by name only
+                store_selected = select_store_by_name(driver, wait, store_name)
                 
                 if not store_selected:
-                    logger.error(f"Failed to select store for {merchant} - skipping")
+                    logger.error(f"Failed to select store '{store_name}' for merchant {merchant_name}")
                     stats['errors'] += 1
-                    error_stores.append(f"{merchant} - {store_name} (Store not found)")
+                    error_stores.append(f"{merchant_name} - Store '{store_name}' not found")
+                    capture_screenshot(driver, f"store_not_found_{merchant_name}")
                     continue
                 
                 # Enter dates and submit
@@ -338,17 +384,17 @@ def main():
                 if confirm_submission(driver, wait, original_url):
                     update_from_date(row["id"])
                     stats['processed_success'] += 1
-                    processed_stores.append(f"{merchant} - {store_name}")
-                    logger.info(f"✅ SUCCESS: {merchant} - {store_name}")
+                    processed_stores.append(f"{merchant_name} - {store_name}")
+                    logger.info(f"✅ SUCCESS: {merchant_name} - {store_name}")
                 else:
                     stats['no_eligible'] += 1
-                    logger.info(f"ℹ️ No eligible transactions for {merchant} - {store_name}")
+                    logger.info(f"ℹ️ No eligible transactions for {merchant_name} - {store_name}")
 
             except Exception as e:
-                logger.error(f"❌ ERROR: {merchant} / {store_id} → {str(e)}")
+                logger.error(f"❌ ERROR: {merchant_name} - {store_name} → {str(e)}")
                 stats['errors'] += 1
-                error_stores.append(f"{merchant} - {store_name} ({str(e)[:50]}...)")
-                capture_screenshot(driver, f"error_{merchant}_{store_id}")
+                error_stores.append(f"{merchant_name} - {store_name} ({str(e)[:50]}...)")
+                capture_screenshot(driver, f"error_{merchant_name}")
 
             finally:
                 # Navigate back to settlement page
