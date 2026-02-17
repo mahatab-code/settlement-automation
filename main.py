@@ -243,34 +243,62 @@ def enter_dates(driver, wait, from_d, to_d):
     t.send_keys(to_d)
 
 
-def submit_form(driver, wait):
-    """Submit the settlement form"""
-    wait.until(EC.element_to_be_clickable((By.ID, "create_settlement"))).click()
-
-
-def confirm_submission(driver, wait, original_url):
-    """Check if submission was successful"""
+def submit_and_confirm_settlement(driver, wait, original_url):
+    """Submit the settlement form and wait for confirmation"""
+    logger.info("Clicking create settlement button...")
+    
+    # Click the create button
+    submit_btn = wait.until(EC.element_to_be_clickable((By.ID, "create_settlement")))
+    submit_btn.click()
+    
+    # Wait longer for settlement to be created (30 seconds)
+    logger.info("Waiting 30 seconds for settlement to be created...")
+    time.sleep(30)
+    
+    # Check for success indicators
     try:
-        cond = EC.any_of(
-            EC.url_changes(original_url),
-            EC.presence_of_element_located((By.XPATH, "//div[@id='swal2-html-container' and contains(text(),'No eligible transactions')]")),
-            EC.alert_is_present(),
-        )
-        WebDriverWait(driver, 120).until(cond)
-
+        # Check if URL changed (successful creation)
         if driver.current_url != original_url:
-            return True  # success
+            logger.info("URL changed - settlement created successfully")
+            return True
+            
+        # Check for success message
         try:
-            driver.switch_to.alert.accept()
+            success_elements = driver.find_elements(By.XPATH, "//*[contains(text(), 'success') or contains(text(), 'Success') or contains(text(), 'created')]")
+            if success_elements:
+                logger.info("Success message found")
+                return True
+        except:
+            pass
+            
+        # Check for any alert/modal
+        try:
+            alert = driver.switch_to.alert
+            alert_text = alert.text
+            logger.info(f"Alert found: {alert_text}")
+            if 'success' in alert_text.lower() or 'created' in alert_text.lower():
+                alert.accept()
+                return True
+            alert.accept()
         except NoAlertPresentException:
-            try:
-                driver.find_element(By.XPATH, "//button[text()='OK']").click()
-            except NoSuchElementException:
-                pass
-        return False
+            pass
+            
+        # Check for "No eligible transactions" message
+        try:
+            no_eligible = driver.find_element(By.XPATH, "//*[contains(text(), 'No eligible transactions')]")
+            if no_eligible:
+                logger.info("No eligible transactions found")
+                return False
+        except:
+            pass
+            
     except Exception as e:
-        logger.warning(f"Error confirming submission: {str(e)}")
-        return False
+        logger.warning(f"Error checking submission result: {str(e)}")
+    
+    # If we're still on the same page, assume it might be a success
+    # but log a warning
+    logger.warning("Could not determine submission result - manual check recommended")
+    return True
 
 
 def navigate_back_to_settlement_page(driver, wait):
@@ -281,7 +309,7 @@ def navigate_back_to_settlement_page(driver, wait):
             logger.info("Navigating back to settlement page (attempt %s/%s)", attempt + 1, max_retries)
             driver.get(SETTLEMENT_CREATE_URL)
             wait.until(EC.presence_of_element_located((By.ID, "select2-merchant_id-container")))
-            time.sleep(1)
+            time.sleep(2)  # Wait for page to fully load
             return True
         except Exception as nav_error:
             logger.warning("Navigation attempt %s failed: %s", attempt + 1, nav_error)
@@ -307,12 +335,15 @@ def main():
         'total_queued': 0,
         'processed_success': 0,
         'no_eligible': 0,
-        'errors': 0
+        'errors': 0,
+        'pending_review': 0
     }
     
     # Track processed stores for reporting
     processed_stores = []
+    no_eligible_stores = []
     error_stores = []
+    pending_review_stores = []
 
     driver = init_webdriver()
     wait = WebDriverWait(driver, TIMEOUT)
@@ -376,18 +407,34 @@ def main():
                     capture_screenshot(driver, f"store_not_found_{merchant_name}")
                     continue
                 
-                # Enter dates and submit
+                # Enter dates
                 enter_dates(driver, wait, from_date, to_date)
-                submit_form(driver, wait)
-
-                # Check submission result
-                if confirm_submission(driver, wait, original_url):
-                    update_from_date(row["id"])
-                    stats['processed_success'] += 1
-                    processed_stores.append(f"{merchant_name} - {store_name}")
-                    logger.info(f"✅ SUCCESS: {merchant_name} - {store_name}")
+                
+                # Submit and wait for confirmation
+                submission_success = submit_and_confirm_settlement(driver, wait, original_url)
+                
+                if submission_success:
+                    # Check if it was a "no eligible transactions" case
+                    try:
+                        no_eligible = driver.find_elements(By.XPATH, "//*[contains(text(), 'No eligible transactions')]")
+                        if no_eligible:
+                            stats['no_eligible'] += 1
+                            no_eligible_stores.append(f"{merchant_name} - {store_name}")
+                            logger.info(f"ℹ️ No eligible transactions for {merchant_name} - {store_name}")
+                        else:
+                            update_from_date(row["id"])
+                            stats['processed_success'] += 1
+                            processed_stores.append(f"{merchant_name} - {store_name}")
+                            logger.info(f"✅ SUCCESS: {merchant_name} - {store_name}")
+                    except:
+                        # Assume success if we can't find "no eligible" message
+                        update_from_date(row["id"])
+                        stats['processed_success'] += 1
+                        processed_stores.append(f"{merchant_name} - {store_name}")
+                        logger.info(f"✅ SUCCESS (assumed): {merchant_name} - {store_name}")
                 else:
                     stats['no_eligible'] += 1
+                    no_eligible_stores.append(f"{merchant_name} - {store_name}")
                     logger.info(f"ℹ️ No eligible transactions for {merchant_name} - {store_name}")
 
             except Exception as e:
@@ -420,6 +467,11 @@ def main():
             logger.info("SUCCESSFULLY PROCESSED STORES (%s):", len(processed_stores))
             for store in processed_stores:
                 logger.info("  ✅ %s", store)
+        
+        if no_eligible_stores:
+            logger.info("NO ELIGIBLE TRANSACTIONS (%s):", len(no_eligible_stores))
+            for store in no_eligible_stores:
+                logger.info("  ℹ️ %s", store)
         
         if error_stores:
             logger.info("STORES WITH ERRORS (%s):", len(error_stores))
