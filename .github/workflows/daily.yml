@@ -3,7 +3,7 @@ name: Daily Settlement Automation
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 19 * * *'   # 1:00 AM Bangladesh Time (UTC 19:00)
+    - cron: '0 19 * * *'
 
 jobs:
   run-bot:
@@ -23,16 +23,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Chrome already থাকে ubuntu-latest এ,
-      # কিন্তু stability জন্য verify করা ভালো
-      - name: Verify Chrome Installation
-        run: |
-          google-chrome --version || true
-
-      - name: Run day.py (Test Mode)
+      - name: Run day.py
         env:
-          COMPANY_EMAIL: ${{ secrets.COMPANY_EMAIL }}
-          COMPANY_PASSWORD: ${{ secrets.COMPANY_PASSWORD }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSOWORD: ${{ secrets.ADMIN_PASSOWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python day.py
