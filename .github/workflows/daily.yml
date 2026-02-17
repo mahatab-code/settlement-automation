@@ -29,15 +29,15 @@ jobs:
           sudo apt install -y google-chrome-stable
 
       # =========================
-      # RUN CSV DOWNLOAD + DB UPDATE
+      # RUN CSV DOWNLOAD + DB UPDATE - COMMENTED OUT FOR TESTING
       # =========================
-      - name: Run day.py
-        env:
-          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          ADMIN_PASSOWORD: ${{ secrets.ADMIN_PASSOWORD }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          python day.py
+      # - name: Run day.py
+      #   env:
+      #     ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      #     ADMIN_PASSOWORD: ${{ secrets.ADMIN_PASSOWORD }}
+      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      #   run: |
+      #     python day.py
 
       # =========================
       # RUN SETTLEMENT CREATOR
