@@ -26,10 +26,6 @@ if not EMAIL or not PASSWORD or not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
-
-# =========================
-# URL CONFIG
-# =========================
 LOGIN_URL = "https://admin.shurjopayment.com/"
 SETTLEMENT_DAY_URL = "https://admin.shurjopayment.com/spadmin/merchant/settlement-day"
 TRX_REPORT_URL = "https://admin.shurjopayment.com/spadmin/report/merchant-daily-trx"
@@ -41,41 +37,33 @@ DOWNLOAD_DIR = os.path.abspath("downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
-# =========================
-# CHROME OPTIONS
-# =========================
-options = Options()
-options.add_argument("--headless=new")
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-options.add_argument("--disable-gpu")
-options.add_argument("--window-size=1920,1080")
+def init_driver():
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
 
-prefs = {
-    "download.default_directory": DOWNLOAD_DIR,
-    "download.prompt_for_download": False,
-}
-options.add_experimental_option("prefs", prefs)
+    prefs = {
+        "download.default_directory": DOWNLOAD_DIR,
+        "download.prompt_for_download": False,
+    }
+    options.add_experimental_option("prefs", prefs)
 
-driver = webdriver.Chrome(options=options)
-wait = WebDriverWait(driver, 30)
+    return webdriver.Chrome(options=options)
 
-
-# =========================
-# HELPER FUNCTIONS
-# =========================
 
 def wait_for_download():
     time.sleep(5)
-    while any(fname.endswith(".crdownload") for fname in os.listdir(DOWNLOAD_DIR)):
+    while any(f.endswith(".crdownload") for f in os.listdir(DOWNLOAD_DIR)):
         time.sleep(1)
 
 
 def parse_days(text):
-    days = {
-        "Monday":"","Tuesday":"","Wednesday":"",
-        "Thursday":"","Friday":"","Saturday":"","Sunday":""
-    }
+    days = {d: "" for d in
+            ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]}
+
     clean = re.sub(r"\(.*?\)", "", str(text))
     for d in clean.split(","):
         d = d.strip()
@@ -100,9 +88,7 @@ def clear_day_columns():
 
 def update_settlement_csv(file_path):
 
-    print("Reading settlement CSV...")
     df = pd.read_csv(file_path)
-
     clear_day_columns()
 
     with engine.begin() as conn:
@@ -117,13 +103,13 @@ def update_settlement_csv(file_path):
 
             days = parse_days(withdraw)
 
-            result = conn.execute(text("""
+            exists = conn.execute(text("""
                 SELECT id FROM settlement_day
                 WHERE LOWER(merchant_name)=LOWER(:m)
                 AND LOWER(store_name)=LOWER(:s)
             """), {"m":merchant, "s":store}).fetchone()
 
-            if result:
+            if exists:
                 conn.execute(text("""
                     UPDATE settlement_day
                     SET "Monday"=:mon,
@@ -170,25 +156,23 @@ def update_settlement_csv(file_path):
 
 def activate_default_stores(trx_file):
 
-    print("Reading trx CSV...")
     df = pd.read_csv(trx_file)
-
-    df["Merchant Name"] = df["Merchant Name"].str.strip().str.lower()
-    df["Store Name"] = df["Store Name"].str.strip().str.lower()
+    df["Merchant Name"] = df["Merchant Name"].str.lower().str.strip()
+    df["Store Name"] = df["Store Name"].str.lower().str.strip()
 
     with engine.begin() as conn:
 
-        default_rows = conn.execute(text("""
+        defaults = conn.execute(text("""
             SELECT merchant_name, store_name
             FROM settlement_day
             WHERE from_date='2030-01-01'
             AND is_default_date=1
         """)).fetchall()
 
-        for merchant, store in default_rows:
+        for merchant, store in defaults:
 
-            m = merchant.strip().lower()
-            s = store.strip().lower()
+            m = merchant.lower().strip()
+            s = store.lower().strip()
 
             match = df[
                 (df["Merchant Name"] == m) &
@@ -208,16 +192,15 @@ def activate_default_stores(trx_file):
                     AND from_date='2030-01-01'
                 """), {"d":trx_date, "m":merchant, "s":store})
 
-                print(f"Activated store: {merchant} - {store}")
-
 
 # =========================
-# MAIN PROCESS
+# MAIN
 # =========================
+
+driver = init_driver()
+wait = WebDriverWait(driver, 30)
 
 try:
-
-    print("Logging in...")
     driver.get(LOGIN_URL)
 
     wait.until(EC.presence_of_element_located((By.ID, "email"))).send_keys(EMAIL)
@@ -225,7 +208,6 @@ try:
     driver.find_element(By.XPATH, "//button[@type='submit']").click()
 
     wait.until(EC.url_contains("/spadmin"))
-    print("Login successful")
 
     # Settlement CSV
     driver.get(SETTLEMENT_DAY_URL)
@@ -238,8 +220,7 @@ try:
     )).select_by_value("-1")
 
     driver.find_element(By.ID, "filter_search").click()
-    time.sleep(10)
-
+    time.sleep(8)
     driver.find_element(By.CSS_SELECTOR, "button.buttons-csv").click()
     wait_for_download()
 
@@ -248,18 +229,13 @@ try:
     wait.until(EC.presence_of_element_located((By.ID, "fromDate"))).send_keys(yesterday)
     driver.find_element(By.ID, "toDate").send_keys(yesterday)
     driver.find_element(By.ID, "filter_search").click()
-    time.sleep(10)
-
+    time.sleep(8)
     driver.find_element(By.CSS_SELECTOR, "button.buttons-csv").click()
     wait_for_download()
 
 finally:
     driver.quit()
 
-
-# =========================
-# PROCESS FILES
-# =========================
 
 files = sorted(
     [os.path.join(DOWNLOAD_DIR, f) for f in os.listdir(DOWNLOAD_DIR)],
@@ -272,4 +248,4 @@ trx_file = files[-1]
 update_settlement_csv(settlement_file)
 activate_default_stores(trx_file)
 
-print("All processes completed successfully")
+print("Day process completed successfully")
