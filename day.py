@@ -15,12 +15,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 # =========================
-# Pandas Safe Mode
-# =========================
-pd.options.mode.copy_on_write = True
-
-
-# =========================
 # ENV VARIABLES
 # =========================
 EMAIL = os.environ.get("ADMIN_EMAIL")
@@ -71,6 +65,12 @@ wait = WebDriverWait(driver, 30)
 # HELPER FUNCTIONS
 # =========================
 
+def wait_for_download():
+    time.sleep(5)
+    while any(fname.endswith(".crdownload") for fname in os.listdir(DOWNLOAD_DIR)):
+        time.sleep(1)
+
+
 def parse_days(text):
     days = {
         "Monday":"","Tuesday":"","Wednesday":"",
@@ -98,10 +98,10 @@ def clear_day_columns():
         """))
 
 
-def update_settlement_excel(file_path):
+def update_settlement_csv(file_path):
 
-    print("Reading settlement file safely...")
-    df = pd.read_excel(file_path, engine="openpyxl", dtype=str)
+    print("Reading settlement CSV...")
+    df = pd.read_csv(file_path)
 
     clear_day_columns()
 
@@ -170,8 +170,8 @@ def update_settlement_excel(file_path):
 
 def activate_default_stores(trx_file):
 
-    print("Reading trx file safely...")
-    df = pd.read_excel(trx_file, engine="openpyxl", dtype=str)
+    print("Reading trx CSV...")
+    df = pd.read_csv(trx_file)
 
     df["Merchant Name"] = df["Merchant Name"].str.strip().str.lower()
     df["Store Name"] = df["Store Name"].str.strip().str.lower()
@@ -227,7 +227,7 @@ try:
     wait.until(EC.url_contains("/spadmin"))
     print("Login successful")
 
-    # Download Settlement
+    # Settlement CSV
     driver.get(SETTLEMENT_DAY_URL)
     wait.until(EC.element_to_be_clickable((By.ID, "select2-day-container"))).click()
     wait.until(EC.element_to_be_clickable(
@@ -239,17 +239,19 @@ try:
 
     driver.find_element(By.ID, "filter_search").click()
     time.sleep(10)
-    driver.find_element(By.XPATH, "//button[contains(@class,'buttons-excel')]").click()
-    time.sleep(5)
 
-    # Download TRX
+    driver.find_element(By.CSS_SELECTOR, "button.buttons-csv").click()
+    wait_for_download()
+
+    # TRX CSV
     driver.get(TRX_REPORT_URL)
     wait.until(EC.presence_of_element_located((By.ID, "fromDate"))).send_keys(yesterday)
     driver.find_element(By.ID, "toDate").send_keys(yesterday)
     driver.find_element(By.ID, "filter_search").click()
     time.sleep(10)
-    driver.find_element(By.XPATH, "//button[contains(@class,'buttons-excel')]").click()
-    time.sleep(5)
+
+    driver.find_element(By.CSS_SELECTOR, "button.buttons-csv").click()
+    wait_for_download()
 
 finally:
     driver.quit()
@@ -267,7 +269,7 @@ files = sorted(
 settlement_file = files[-2]
 trx_file = files[-1]
 
-update_settlement_excel(settlement_file)
+update_settlement_csv(settlement_file)
 activate_default_stores(trx_file)
 
 print("All processes completed successfully")
