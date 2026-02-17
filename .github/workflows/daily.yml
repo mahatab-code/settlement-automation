@@ -3,7 +3,7 @@ name: Daily Settlement Automation
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 19 * * *'
+    - cron: '0 3 * * *'   # 9:00 AM Bangladesh Time (UTC 03:00)
 
 jobs:
   run-bot:
@@ -20,9 +20,17 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install Google Chrome
+        run: |
+          sudo apt update
+          sudo apt install -y google-chrome-stable
+
+      # =========================
+      # RUN CSV DOWNLOAD + DB UPDATE
+      # =========================
       - name: Run day.py
         env:
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
@@ -30,3 +38,14 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python day.py
+
+      # =========================
+      # RUN SETTLEMENT CREATOR
+      # =========================
+      - name: Run main.py
+        env:
+          COMPANY_EMAIL: ${{ secrets.COMPANY_EMAIL }}
+          COMPANY_PASSWORD: ${{ secrets.COMPANY_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python main.py
