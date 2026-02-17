@@ -139,17 +139,31 @@ def main():
 
         logger.info("Settlement page loaded")
 
+        # Debug: Show current Bangladesh time and day
+        bd_now = get_bd_now()
+        bd_today_name = get_bd_today_name()
+        logger.info(f"Current Bangladesh Time: {bd_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"Today's weekday in BD: {bd_today_name}")
+
         df = read_data_from_db()
+        
+        # Debug: Show all merchants and their schedule
+        logger.info("Current settlement_day table data:")
+        logger.info(f"\n{df.to_string()}")
 
-        today_name = get_bd_today_name()
-
-        df_today = df[df[today_name] == "✓"]
+        # Check which merchants are scheduled for today
+        df_today = df[df[bd_today_name] == "✓"]
 
         if df_today.empty:
-            logger.info("No merchants scheduled for today")
+            logger.info(f"No merchants scheduled for {bd_today_name}")
+            # Show which merchants are scheduled for each day
+            for day in ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
+                day_count = len(df[df[day] == "✓"])
+                if day_count > 0:
+                    logger.info(f"Merchants scheduled for {day}: {day_count}")
             return
 
-        logger.info(f"{len(df_today)} merchants to process")
+        logger.info(f"{len(df_today)} merchants to process for {bd_today_name}")
 
         for _, row in df_today.iterrows():
 
@@ -158,7 +172,8 @@ def main():
             from_date = pd.to_datetime(row["from_date"]).strftime("%d/%m/%Y")
             to_date = get_bd_yesterday_str("%d/%m/%Y")
 
-            logger.info(f"Processing: {merchant}")
+            logger.info(f"Processing: {merchant} (Store ID: {store_id})")
+            logger.info(f"Date range: {from_date} to {to_date}")
 
             # Select merchant
             wait.until(
