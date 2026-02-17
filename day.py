@@ -15,7 +15,13 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 # =========================
-# ENV VARIABLES (GitHub Secrets)
+# Pandas Safe Mode
+# =========================
+pd.options.mode.copy_on_write = True
+
+
+# =========================
+# ENV VARIABLES
 # =========================
 EMAIL = os.environ.get("ADMIN_EMAIL")
 PASSWORD = os.environ.get("ADMIN_PASSOWORD")
@@ -93,15 +99,21 @@ def clear_day_columns():
 
 
 def update_settlement_excel(file_path):
-    df = pd.read_excel(file_path)
+
+    print("Reading settlement file safely...")
+    df = pd.read_excel(file_path, engine="openpyxl", dtype=str)
+
     clear_day_columns()
 
     with engine.begin() as conn:
         for _, row in df.iterrows():
 
-            merchant = str(row["Merchant"]).strip()
-            store = str(row["Store"]).strip()
-            withdraw = row["Withdraw Days"]
+            merchant = str(row.get("Merchant", "")).strip()
+            store = str(row.get("Store", "")).strip()
+            withdraw = row.get("Withdraw Days", "")
+
+            if not merchant or not store:
+                continue
 
             days = parse_days(withdraw)
 
@@ -157,7 +169,9 @@ def update_settlement_excel(file_path):
 
 
 def activate_default_stores(trx_file):
-    df = pd.read_excel(trx_file)
+
+    print("Reading trx file safely...")
+    df = pd.read_excel(trx_file, engine="openpyxl", dtype=str)
 
     df["Merchant Name"] = df["Merchant Name"].str.strip().str.lower()
     df["Store Name"] = df["Store Name"].str.strip().str.lower()
@@ -172,6 +186,7 @@ def activate_default_stores(trx_file):
         """)).fetchall()
 
         for merchant, store in default_rows:
+
             m = merchant.strip().lower()
             s = store.strip().lower()
 
@@ -199,6 +214,7 @@ def activate_default_stores(trx_file):
 # =========================
 # MAIN PROCESS
 # =========================
+
 try:
 
     print("Logging in...")
@@ -211,7 +227,7 @@ try:
     wait.until(EC.url_contains("/spadmin"))
     print("Login successful")
 
-    # Download Settlement Day
+    # Download Settlement
     driver.get(SETTLEMENT_DAY_URL)
     wait.until(EC.element_to_be_clickable((By.ID, "select2-day-container"))).click()
     wait.until(EC.element_to_be_clickable(
@@ -235,12 +251,14 @@ try:
     driver.find_element(By.XPATH, "//button[contains(@class,'buttons-excel')]").click()
     time.sleep(5)
 
-    print("Download complete")
-
 finally:
     driver.quit()
 
-# Process Files
+
+# =========================
+# PROCESS FILES
+# =========================
+
 files = sorted(
     [os.path.join(DOWNLOAD_DIR, f) for f in os.listdir(DOWNLOAD_DIR)],
     key=os.path.getctime
