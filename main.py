@@ -251,9 +251,9 @@ def submit_and_confirm_settlement(driver, wait, original_url):
     submit_btn = wait.until(EC.element_to_be_clickable((By.ID, "create_settlement")))
     submit_btn.click()
     
-    # Wait longer for settlement to be created (30 seconds)
-    logger.info("Waiting 30 seconds for settlement to be created...")
-    time.sleep(30)
+    # Wait longer for settlement to be created (60 seconds)
+    logger.info("Waiting 60 seconds for settlement to be created...")
+    time.sleep(60)
     
     # Check for success indicators
     try:
@@ -493,3 +493,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
