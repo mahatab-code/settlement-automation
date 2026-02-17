@@ -151,16 +151,18 @@ def main():
         logger.info("Current settlement_day table data:")
         logger.info(f"\n{df.to_string()}")
 
-        # Check which merchants are scheduled for today
-        df_today = df[df[bd_today_name] == "✓"]
+        # Check which merchants are scheduled for today (looking for 1 instead of ✓)
+        # Convert the day column to string and check for '1'
+        df_today = df[df[bd_today_name].astype(str).str.strip() == '1']
 
         if df_today.empty:
-            logger.info(f"No merchants scheduled for {bd_today_name}")
+            logger.info(f"No merchants scheduled for {bd_today_name} (looking for '1' in the column)")
             # Show which merchants are scheduled for each day
             for day in ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
-                day_count = len(df[df[day] == "✓"])
+                day_count = len(df[df[day].astype(str).str.strip() == '1'])
                 if day_count > 0:
-                    logger.info(f"Merchants scheduled for {day}: {day_count}")
+                    merchants = df[df[day].astype(str).str.strip() == '1']['merchant_name'].tolist()
+                    logger.info(f"Merchants scheduled for {day}: {day_count} - {merchants}")
             return
 
         logger.info(f"{len(df_today)} merchants to process for {bd_today_name}")
