@@ -15,7 +15,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 
 
 # =========================
@@ -102,6 +102,82 @@ def update_from_date(record_id):
 
 
 # =========================
+# SELECT MERCHANT FUNCTION
+# =========================
+def select_merchant(driver, wait, merchant_name):
+    """Select merchant with multiple strategies"""
+    try:
+        logger.info(f"Attempting to select merchant: {merchant_name}")
+        
+        # Click the merchant dropdown
+        wait.until(
+            EC.element_to_be_clickable(
+                (By.ID, "select2-merchant_id-container")
+            )
+        ).click()
+        time.sleep(1)
+        
+        # Try different search box selectors
+        search_box = None
+        search_selectors = [
+            (By.CSS_SELECTOR, "input.select2-search__field"),
+            (By.CSS_SELECTOR, "input[type='search']"),
+            (By.XPATH, "//input[@class='select2-search__field']")
+        ]
+        
+        for selector_type, selector_value in search_selectors:
+            try:
+                search_box = WebDriverWait(driver, 5).until(
+                    EC.visibility_of_element_located((selector_type, selector_value))
+                )
+                if search_box:
+                    logger.info(f"Found search box with selector: {selector_value}")
+                    break
+            except:
+                continue
+        
+        if not search_box:
+            raise Exception("Could not find search box")
+        
+        # Clear and type merchant name
+        search_box.clear()
+        search_box.send_keys(merchant_name)
+        time.sleep(2)
+        
+        # Try different result selectors
+        result_selectors = [
+            (By.XPATH, f"//li[contains(@class,'select2-results__option') and text()='{merchant_name}']"),
+            (By.XPATH, f"//li[contains(text(), '{merchant_name}')]"),
+            (By.CSS_SELECTOR, "li.select2-results__option")
+        ]
+        
+        for selector_type, selector_value in result_selectors:
+            try:
+                result = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((selector_type, selector_value))
+                )
+                if result:
+                    logger.info(f"Found merchant with selector: {selector_value}")
+                    result.click()
+                    time.sleep(1)
+                    return True
+            except:
+                continue
+        
+        raise Exception(f"Could not find merchant '{merchant_name}' in results")
+        
+    except Exception as e:
+        logger.error(f"Error selecting merchant {merchant_name}: {str(e)}")
+        # Take screenshot for debugging
+        try:
+            driver.save_screenshot(f"error_merchant_{merchant_name.replace(' ', '_')}.png")
+            logger.info(f"Screenshot saved for {merchant_name}")
+        except:
+            pass
+        return False
+
+
+# =========================
 # MAIN PROCESS
 # =========================
 def main():
@@ -147,89 +223,119 @@ def main():
 
         df = read_data_from_db()
         
-        # Debug: Show all merchants and their schedule
-        logger.info("Current settlement_day table data:")
-        logger.info(f"\n{df.to_string()}")
-
-        # Check which merchants are scheduled for today (looking for 1 instead of ✓)
-        # Convert the day column to string and check for '1'
+        # Check which merchants are scheduled for today (looking for 1)
         df_today = df[df[bd_today_name].astype(str).str.strip() == '1']
 
         if df_today.empty:
-            logger.info(f"No merchants scheduled for {bd_today_name} (looking for '1' in the column)")
-            # Show which merchants are scheduled for each day
-            for day in ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
-                day_count = len(df[df[day].astype(str).str.strip() == '1'])
-                if day_count > 0:
-                    merchants = df[df[day].astype(str).str.strip() == '1']['merchant_name'].tolist()
-                    logger.info(f"Merchants scheduled for {day}: {day_count} - {merchants}")
+            logger.info(f"No merchants scheduled for {bd_today_name}")
             return
 
         logger.info(f"{len(df_today)} merchants to process for {bd_today_name}")
+        
+        # Process each merchant with individual error handling
+        success_count = 0
+        error_count = 0
 
-        for _, row in df_today.iterrows():
+        for index, row in df_today.iterrows():
 
-            merchant = str(row["merchant_name"]).strip()
-            store_id = str(row["store_id"]).strip()
-            from_date = pd.to_datetime(row["from_date"]).strftime("%d/%m/%Y")
-            to_date = get_bd_yesterday_str("%d/%m/%Y")
+            try:
+                merchant = str(row["merchant_name"]).strip()
+                store_id = str(row["store_id"]).strip()
+                from_date = pd.to_datetime(row["from_date"]).strftime("%d/%m/%Y")
+                to_date = get_bd_yesterday_str("%d/%m/%Y")
 
-            logger.info(f"Processing: {merchant} (Store ID: {store_id})")
-            logger.info(f"Date range: {from_date} to {to_date}")
+                logger.info(f"Processing ({index+1}/{len(df_today)}): {merchant} (Store ID: {store_id})")
+                logger.info(f"Date range: {from_date} to {to_date}")
 
-            # Select merchant
-            wait.until(
-                EC.element_to_be_clickable(
-                    (By.ID, "select2-merchant_id-container")
-                )
-            ).click()
+                # Select merchant using the new function
+                if not select_merchant(driver, wait, merchant):
+                    error_count += 1
+                    logger.error(f"Failed to select merchant: {merchant}, skipping...")
+                    continue
 
-            search_box = wait.until(
-                EC.visibility_of_element_located(
-                    (By.CSS_SELECTOR, "input.select2-search__field")
-                )
-            )
+                # Select store
+                try:
+                    store_select = Select(wait.until(
+                        EC.presence_of_element_located((By.ID, "store_id"))
+                    ))
+                    store_select.select_by_value(store_id)
+                    logger.info(f"Store selected: {store_id}")
+                except Exception as e:
+                    logger.error(f"Error selecting store {store_id}: {str(e)}")
+                    error_count += 1
+                    continue
 
-            search_box.send_keys(merchant)
+                # Enter dates
+                try:
+                    # From date
+                    from_date_field = wait.until(
+                        EC.presence_of_element_located((By.ID, "fromDate"))
+                    )
+                    from_date_field.clear()
+                    from_date_field.send_keys(from_date)
+                    
+                    # To date
+                    to_date_field = driver.find_element(By.ID, "toDate")
+                    to_date_field.clear()
+                    to_date_field.send_keys(to_date)
+                    
+                    logger.info("Dates entered successfully")
+                except Exception as e:
+                    logger.error(f"Error entering dates: {str(e)}")
+                    error_count += 1
+                    continue
 
-            wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH,
-                     f"//li[contains(@class,'select2-results__option') and text()='{merchant}']")
-                )
-            ).click()
+                # Submit
+                try:
+                    submit_btn = wait.until(
+                        EC.element_to_be_clickable((By.ID, "create_settlement"))
+                    )
+                    submit_btn.click()
+                    logger.info("Form submitted")
+                except Exception as e:
+                    logger.error(f"Error submitting form: {str(e)}")
+                    error_count += 1
+                    continue
 
-            # Select store
-            Select(wait.until(
-                EC.presence_of_element_located((By.ID, "store_id"))
-            )).select_by_value(store_id)
+                # Wait for processing
+                time.sleep(5)
 
-            # Enter dates
-            wait.until(
-                EC.presence_of_element_located((By.ID, "fromDate"))
-            ).clear()
+                # Update database
+                update_from_date(row["id"])
+                
+                success_count += 1
+                logger.info(f"✅ Settlement created for {merchant}")
+                
+                # Small pause between merchants
+                time.sleep(2)
 
-            driver.find_element(By.ID, "fromDate").send_keys(from_date)
+            except Exception as e:
+                error_count += 1
+                logger.error(f"Unexpected error processing {merchant if 'merchant' in locals() else 'unknown'}: {str(e)}")
+                # Take screenshot on error
+                try:
+                    driver.save_screenshot(f"error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+                except:
+                    pass
+                continue
 
-            driver.find_element(By.ID, "toDate").clear()
-            driver.find_element(By.ID, "toDate").send_keys(to_date)
+        logger.info(f"Processing complete - Success: {success_count}, Errors: {error_count}")
 
-            # Submit
-            driver.find_element(By.ID, "create_settlement").click()
-
-            time.sleep(3)
-
-            update_from_date(row["id"])
-
-            logger.info(f"Settlement created for {merchant}")
-
-        logger.info("All settlements processed successfully")
-
-    except TimeoutException:
-        logger.error("Timeout occurred during execution")
+    except TimeoutException as e:
+        logger.error(f"Timeout occurred during execution: {str(e)}")
+        # Take screenshot
+        try:
+            driver.save_screenshot(f"timeout_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        except:
+            pass
 
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error: {str(e)}")
+        # Take screenshot
+        try:
+            driver.save_screenshot(f"error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        except:
+            pass
 
     finally:
         driver.quit()
