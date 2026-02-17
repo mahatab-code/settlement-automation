@@ -13,11 +13,12 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 
+
 # =========================
 # ENV VARIABLES (GitHub Secrets)
 # =========================
-EMAIL = os.environ.get("Admin_Email")
-PASSWORD = os.environ.get("Admin_passoword")
+EMAIL = os.environ.get("ADMIN_EMAIL")
+PASSWORD = os.environ.get("ADMIN_PASSOWORD")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not EMAIL or not PASSWORD or not DATABASE_URL:
@@ -25,6 +26,10 @@ if not EMAIL or not PASSWORD or not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
+
+# =========================
+# URL CONFIG
+# =========================
 LOGIN_URL = "https://admin.shurjopayment.com/"
 SETTLEMENT_DAY_URL = "https://admin.shurjopayment.com/spadmin/merchant/settlement-day"
 TRX_REPORT_URL = "https://admin.shurjopayment.com/spadmin/report/merchant-daily-trx"
@@ -34,6 +39,7 @@ yesterday = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
 
 DOWNLOAD_DIR = os.path.abspath("downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
 
 # =========================
 # CHROME OPTIONS
@@ -58,6 +64,7 @@ wait = WebDriverWait(driver, 30)
 # =========================
 # HELPER FUNCTIONS
 # =========================
+
 def parse_days(text):
     days = {
         "Monday":"","Tuesday":"","Wednesday":"",
@@ -87,11 +94,11 @@ def clear_day_columns():
 
 def update_settlement_excel(file_path):
     df = pd.read_excel(file_path)
-
     clear_day_columns()
 
     with engine.begin() as conn:
         for _, row in df.iterrows():
+
             merchant = str(row["Merchant"]).strip()
             store = str(row["Store"]).strip()
             withdraw = row["Withdraw Days"]
@@ -193,6 +200,7 @@ def activate_default_stores(trx_file):
 # MAIN PROCESS
 # =========================
 try:
+
     print("Logging in...")
     driver.get(LOGIN_URL)
 
@@ -203,7 +211,7 @@ try:
     wait.until(EC.url_contains("/spadmin"))
     print("Login successful")
 
-    # Settlement Day
+    # Download Settlement Day
     driver.get(SETTLEMENT_DAY_URL)
     wait.until(EC.element_to_be_clickable((By.ID, "select2-day-container"))).click()
     wait.until(EC.element_to_be_clickable(
@@ -218,7 +226,7 @@ try:
     driver.find_element(By.XPATH, "//button[contains(@class,'buttons-excel')]").click()
     time.sleep(5)
 
-    # TRX
+    # Download TRX
     driver.get(TRX_REPORT_URL)
     wait.until(EC.presence_of_element_located((By.ID, "fromDate"))).send_keys(yesterday)
     driver.find_element(By.ID, "toDate").send_keys(yesterday)
@@ -232,9 +240,7 @@ try:
 finally:
     driver.quit()
 
-# =========================
-# PROCESS FILES
-# =========================
+# Process Files
 files = sorted(
     [os.path.join(DOWNLOAD_DIR, f) for f in os.listdir(DOWNLOAD_DIR)],
     key=os.path.getctime
@@ -247,4 +253,3 @@ update_settlement_excel(settlement_file)
 activate_default_stores(trx_file)
 
 print("All processes completed successfully")
-
