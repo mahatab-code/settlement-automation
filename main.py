@@ -253,53 +253,73 @@ def submit_and_verify_settlement(driver, wait, original_url):
     
     # Wait for response (popup or redirect)
     logger.info("Waiting for response...")
-    time.sleep(8)  # Wait for popup to appear
+    time.sleep(8)
     
-    # ===== STEP 1: Check for Warning Popup (No Transactions) =====
+    # ===== STEP 1: Check for "No Transactions" warning popup =====
+    # Based on your HTML structure:
+    # <div class="swal2-icon swal2-warning">!</div>
+    # <h2 class="swal2-title">No Transactions</h2>
+    # <div class="swal2-html-container">No eligible transactions found...</div>
     try:
-        # Check for warning icon (swal2-icon-warning)
-        warning_popup = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon-warning')]")
-        if warning_popup:
-            logger.info("Warning popup detected - checking message...")
+        # Check for warning icon
+        warning_icon = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon') and contains(@class, 'swal2-warning')]")
+        
+        # Check for "No Transactions" title
+        no_transaction_title = driver.find_elements(By.XPATH, "//h2[contains(@class, 'swal2-title') and text()='No Transactions']")
+        
+        # Check for the message about no eligible transactions
+        no_transaction_msg = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-html-container') and contains(text(), 'No eligible transactions')]")
+        
+        if warning_icon and (no_transaction_title or no_transaction_msg):
+            logger.info("✅ DETECTED: No Transactions popup")
             
-            # Check for "No Transactions" or "No eligible transactions" text
-            no_transaction_text = driver.find_elements(By.XPATH, 
-                "//*[contains(text(), 'No Transactions') or contains(text(), 'No eligible transactions')]")
-            
-            if no_transaction_text:
-                logger.info("ℹ️ No eligible transactions warning popup found")
+            # Click OK button to dismiss popup
+            try:
+                # Find OK button - multiple possible XPaths
+                ok_btn = driver.find_elements(By.XPATH, "//button[contains(@class, 'swal2-confirm') and text()='OK']")
+                if not ok_btn:
+                    ok_btn = driver.find_elements(By.XPATH, "//button[text()='OK']")
+                if not ok_btn:
+                    ok_btn = driver.find_elements(By.XPATH, "//div[@class='swal2-actions']//button[text()='OK']")
                 
-                # Click OK button to dismiss popup
-                try:
-                    ok_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'OK')]")
-                    ok_btn.click()
-                    time.sleep(2)
+                if ok_btn:
+                    ok_btn[0].click()
                     logger.info("Popup dismissed")
-                except Exception as e:
-                    logger.warning(f"Could not click OK button: {str(e)}")
-                
-                return "no_eligible"  # নির্দিষ্টভাবে no eligible transactions
+                    time.sleep(2)
+                else:
+                    logger.warning("OK button not found, but popup detected")
+            except Exception as e:
+                logger.warning(f"Could not click OK button: {str(e)}")
+            
+            return "no_eligible"
     except Exception as e:
-        logger.debug(f"No warning popup found: {str(e)}")
+        logger.debug(f"Error checking for warning popup: {str(e)}")
     
-    # ===== STEP 2: Check for Success Popup =====
+    # ===== STEP 2: Check for Success popup =====
     try:
-        # Check for success icon (swal2-icon-success)
-        success_popup = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon-success')]")
-        if success_popup:
+        # Check for success icon
+        success_icon = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon') and contains(@class, 'swal2-success')]")
+        
+        # Check for success message
+        success_title = driver.find_elements(By.XPATH, "//h2[contains(@class, 'swal2-title') and contains(text(), 'Success')]")
+        
+        if success_icon or success_title:
             logger.info("✅ Success popup detected")
             
             # Click OK button
             try:
-                ok_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'OK')]")
-                ok_btn.click()
-                time.sleep(2)
+                ok_btn = driver.find_elements(By.XPATH, "//button[contains(@class, 'swal2-confirm') and text()='OK']")
+                if not ok_btn:
+                    ok_btn = driver.find_elements(By.XPATH, "//button[text()='OK']")
+                if ok_btn:
+                    ok_btn[0].click()
+                    time.sleep(2)
             except:
                 pass
             
             return "success"
     except Exception as e:
-        logger.debug(f"No success popup found: {str(e)}")
+        logger.debug(f"Error checking for success popup: {str(e)}")
     
     # ===== STEP 3: Check for Redirect to Different Page =====
     current_url = driver.current_url
@@ -326,7 +346,16 @@ def submit_and_verify_settlement(driver, wait, original_url):
     except:
         pass
     
-    # ===== STEP 5: If we're here, result is uncertain =====
+    # ===== STEP 5: Check page source as last resort =====
+    try:
+        page_source = driver.page_source.lower()
+        if "no transactions" in page_source and "no eligible" in page_source:
+            logger.info("📄 Page source contains 'no transactions' text")
+            return "no_eligible"
+    except:
+        pass
+    
+    # ===== STEP 6: If we're here, result is uncertain =====
     logger.warning("⚠️ Could not determine result - manual check required")
     return "uncertain"
 
