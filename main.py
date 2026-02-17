@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Automated settlement creator — BDT Timezone Version
-"""
 
 import os
 import sys
@@ -15,15 +12,11 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    NoAlertPresentException
-)
+from selenium.common.exceptions import NoSuchElementException, NoAlertPresentException
 
 # =========================
 # ENV VARIABLES
@@ -47,14 +40,11 @@ DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday",
 
 TICK_INDICATORS = {"1", "TRUE", "True", "true", "✔", "✓", "x", "X"}
 
-# =========================
-# LOGGING
-# =========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("settlement-bot")
 
 # =========================
-# TIMEZONE FIX (BDT)
+# ✅ BDT TIMEZONE FIX ONLY
 # =========================
 bd_tz = pytz.timezone("Asia/Dhaka")
 
@@ -68,7 +58,7 @@ def today_str():
     return datetime.now(bd_tz).strftime("%d/%m/%Y")
 
 # =========================
-# DB ENGINE
+# DB
 # =========================
 def get_db_engine():
     if DATABASE_URL.startswith("postgres://"):
@@ -91,7 +81,7 @@ def update_from_date_in_db(record_id: int, new_date: str):
         )
 
 # =========================
-# WEBDRIVER
+# DRIVER
 # =========================
 def init_webdriver():
     options = Options()
@@ -100,11 +90,10 @@ def init_webdriver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-
     return webdriver.Chrome(options=options)
 
 # =========================
-# LOGIN
+# LOGIN (UNCHANGED WORKING VERSION)
 # =========================
 def perform_login(driver, wait):
     logger.info("Opening login page...")
@@ -114,7 +103,8 @@ def perform_login(driver, wait):
     driver.find_element(By.ID, "password-field").send_keys(PASSWORD)
     driver.find_element(By.XPATH, "//button[@type='submit']").click()
 
-    wait.until(EC.url_contains("/dashboard"))
+    # 🔥 আগের working logic
+    wait.until(EC.url_contains("/spadmin"))
     logger.info("Login successful")
 
     driver.get(SETTLEMENT_CREATE_URL)
@@ -159,7 +149,6 @@ def main():
 
             logger.info(f"Processing: {merchant} - {store_name}")
 
-            # Select Merchant
             wait.until(EC.element_to_be_clickable(
                 (By.ID, "select2-merchant_id-container"))).click()
 
@@ -174,13 +163,11 @@ def main():
                 )
             ).click()
 
-            # Select Store
             select = Select(wait.until(
                 EC.presence_of_element_located((By.ID, "store_id"))
             ))
             select.select_by_visible_text(store_name)
 
-            # Enter Dates
             f = wait.until(EC.presence_of_element_located((By.ID, "fromDate")))
             f.clear()
             f.send_keys(from_date)
@@ -189,7 +176,6 @@ def main():
             t.clear()
             t.send_keys(to_date)
 
-            # Submit
             wait.until(EC.element_to_be_clickable(
                 (By.ID, "create_settlement"))).click()
 
