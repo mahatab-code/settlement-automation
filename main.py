@@ -123,6 +123,7 @@ def update_from_date(record_id):
                 updated_at=NOW()
             WHERE id=:i
         """), {"d": today_date, "i": record_id})
+        logger.info(f"✅ DB updated for ID {record_id}: from_date set to {today_date}")
 
 
 # =========================
@@ -251,15 +252,12 @@ def submit_and_verify_settlement(driver, wait, original_url):
     submit_btn = wait.until(EC.element_to_be_clickable((By.ID, "create_settlement")))
     submit_btn.click()
     
-    # Wait for response (popup or redirect)
-    logger.info("Waiting for response...")
-    time.sleep(8)
+    # ===== STEP 1: First check for immediate popup (No Transactions) =====
+    # This appears immediately if no transactions
+    logger.info("Checking for immediate popup...")
+    time.sleep(5)
     
-    # ===== STEP 1: Check for "No Transactions" warning popup =====
-    # Based on your HTML structure:
-    # <div class="swal2-icon swal2-warning">!</div>
-    # <h2 class="swal2-title">No Transactions</h2>
-    # <div class="swal2-html-container">No eligible transactions found...</div>
+    # Check for "No Transactions" warning popup
     try:
         # Check for warning icon
         warning_icon = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon') and contains(@class, 'swal2-warning')]")
@@ -275,7 +273,6 @@ def submit_and_verify_settlement(driver, wait, original_url):
             
             # Click OK button to dismiss popup
             try:
-                # Find OK button - multiple possible XPaths
                 ok_btn = driver.find_elements(By.XPATH, "//button[contains(@class, 'swal2-confirm') and text()='OK']")
                 if not ok_btn:
                     ok_btn = driver.find_elements(By.XPATH, "//button[text()='OK']")
@@ -291,73 +288,44 @@ def submit_and_verify_settlement(driver, wait, original_url):
             except Exception as e:
                 logger.warning(f"Could not click OK button: {str(e)}")
             
-            return "no_eligible"
+            return "no_eligible"  # No transactions, DB update hobe na
     except Exception as e:
         logger.debug(f"Error checking for warning popup: {str(e)}")
     
-    # ===== STEP 2: Check for Success popup =====
-    try:
-        # Check for success icon
-        success_icon = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon') and contains(@class, 'swal2-success')]")
+    # ===== STEP 2: If no popup, wait for redirect (transactions exist) =====
+    # This can take time - wait up to 60 seconds
+    logger.info("No immediate popup detected. Waiting up to 60 seconds for redirect...")
+    
+    max_wait = 60
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait:
+        current_url = driver.current_url
         
-        # Check for success message
-        success_title = driver.find_elements(By.XPATH, "//h2[contains(@class, 'swal2-title') and contains(text(), 'Success')]")
+        # Check if URL changed to a different page (not the create page)
+        if current_url != original_url and "create" not in current_url:
+            logger.info(f"✅ Redirected to different page after {int(time.time() - start_time)} seconds: {current_url}")
+            return "success"  # Transactions exist, DB update hobe
         
-        if success_icon or success_title:
-            logger.info("✅ Success popup detected")
-            
-            # Click OK button
-            try:
-                ok_btn = driver.find_elements(By.XPATH, "//button[contains(@class, 'swal2-confirm') and text()='OK']")
-                if not ok_btn:
-                    ok_btn = driver.find_elements(By.XPATH, "//button[text()='OK']")
-                if ok_btn:
-                    ok_btn[0].click()
-                    time.sleep(2)
-            except:
-                pass
-            
-            return "success"
-    except Exception as e:
-        logger.debug(f"Error checking for success popup: {str(e)}")
-    
-    # ===== STEP 3: Check for Redirect to Different Page =====
-    current_url = driver.current_url
-    if current_url != original_url:
-        # Make sure it's not the same create page
-        if "create" not in current_url:
-            logger.info(f"✅ Redirected to different page: {current_url}")
-            return "success"
-        else:
-            logger.info(f"Returned to same create page: {current_url}")
-    
-    # ===== STEP 4: Check for any alert =====
-    try:
-        alert = driver.switch_to.alert
-        alert_text = alert.text
-        logger.info(f"Alert found: {alert_text}")
+        # Also check for any success popup (just in case)
+        try:
+            success_icon = driver.find_elements(By.XPATH, "//div[contains(@class, 'swal2-icon') and contains(@class, 'swal2-success')]")
+            if success_icon:
+                logger.info(f"✅ Success popup detected after {int(time.time() - start_time)} seconds")
+                return "success"
+        except:
+            pass
         
-        if "no eligible" in alert_text.lower() or "no transaction" in alert_text.lower():
-            alert.accept()
-            return "no_eligible"
-        else:
-            alert.accept()
-            return "success"
-    except:
-        pass
+        # Check page source for any clues
+        if int(time.time() - start_time) % 10 == 0:  # Every 10 seconds
+            logger.info(f"Still waiting... ({int(time.time() - start_time)} seconds elapsed)")
+        
+        # Wait 2 seconds before checking again
+        time.sleep(2)
     
-    # ===== STEP 5: Check page source as last resort =====
-    try:
-        page_source = driver.page_source.lower()
-        if "no transactions" in page_source and "no eligible" in page_source:
-            logger.info("📄 Page source contains 'no transactions' text")
-            return "no_eligible"
-    except:
-        pass
-    
-    # ===== STEP 6: If we're here, result is uncertain =====
-    logger.warning("⚠️ Could not determine result - manual check required")
-    return "uncertain"
+    # ===== STEP 3: If we're here after 60 seconds, something is wrong =====
+    logger.warning(f"⚠️ No redirect after {max_wait} seconds - manual check required")
+    return "uncertain"  # Neither popup nor redirect - manual check needed
 
 
 def navigate_back_to_settlement_page(driver, wait):
@@ -444,6 +412,7 @@ def main():
             logger.info(f"Date range: {from_date} to {to_date}")
 
             original_url = driver.current_url
+            record_id = row["id"]
             
             try:
                 # Select merchant
@@ -473,15 +442,17 @@ def main():
                 result = submit_and_verify_settlement(driver, wait, original_url)
                 
                 if result == "success":
-                    update_from_date(row["id"])
+                    update_from_date(record_id)  # ✅ DB update হবে (transaction আছে)
                     stats['confirmed_success'] += 1
                     confirmed_stores.append(f"{merchant_name} - {store_name}")
                     logger.info(f"✅ CONFIRMED SUCCESS: {merchant_name} - {store_name}")
                 elif result == "no_eligible":
+                    # ❌ DB update হবে না (কোন transaction নেই)
                     stats['no_eligible'] += 1
                     no_eligible_stores.append(f"{merchant_name} - {store_name}")
                     logger.info(f"ℹ️ No eligible transactions for {merchant_name} - {store_name}")
                 else:  # uncertain
+                    # ❌ DB update হবে না (কি হয়েছে নিশ্চিত নয়)
                     stats['uncertain'] += 1
                     uncertain_stores.append(f"{merchant_name} - {store_name}")
                     logger.warning(f"⚠️ UNCERTAIN - Manual check required: {merchant_name} - {store_name}")
@@ -507,24 +478,24 @@ def main():
         logger.info("SETTLEMENT PROCESSING REPORT - %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         logger.info("=" * 60)
         logger.info(f"Total queued for today: {stats['total_queued']}")
-        logger.info(f"✅ Confirmed Success: {stats['confirmed_success']}")
-        logger.info(f"ℹ️ No eligible transactions: {stats['no_eligible']}")
-        logger.info(f"⚠️ Uncertain (needs manual check): {stats['uncertain']}")
+        logger.info(f"✅ Confirmed Success (DB updated): {stats['confirmed_success']}")
+        logger.info(f"ℹ️ No eligible transactions (DB not updated): {stats['no_eligible']}")
+        logger.info(f"⚠️ Uncertain - Manual check required (DB not updated): {stats['uncertain']}")
         logger.info(f"❌ Errors: {stats['errors']}")
         logger.info("=" * 60)
         
         if confirmed_stores:
-            logger.info("✅ CONFIRMED SUCCESS ({0}):".format(len(confirmed_stores)))
+            logger.info("✅ CONFIRMED SUCCESS - DB UPDATED ({0}):".format(len(confirmed_stores)))
             for store in confirmed_stores:
                 logger.info("  ✅ %s", store)
         
         if no_eligible_stores:
-            logger.info("ℹ️ NO ELIGIBLE TRANSACTIONS ({0}):".format(len(no_eligible_stores)))
+            logger.info("ℹ️ NO ELIGIBLE TRANSACTIONS - DB NOT UPDATED ({0}):".format(len(no_eligible_stores)))
             for store in no_eligible_stores:
                 logger.info("  ℹ️ %s", store)
         
         if uncertain_stores:
-            logger.info("⚠️ NEED MANUAL CHECK ({0}):".format(len(uncertain_stores)))
+            logger.info("⚠️ NEED MANUAL CHECK - DB NOT UPDATED ({0}):".format(len(uncertain_stores)))
             for store in uncertain_stores:
                 logger.info("  ⚠️ %s", store)
         
@@ -539,11 +510,11 @@ def main():
         
         # Summary recommendation
         if stats['uncertain'] > 0:
-            logger.info("⚠️ RECOMMENDATION: Please manually check the {0} uncertain settlements in the ShurjoPay admin panel.".format(stats['uncertain']))
+            logger.info("⚠️ RECOMMENDATION: Please manually check the {0} uncertain settlements in the ShurjoPay admin panel. DB was NOT updated for these.".format(stats['uncertain']))
         if stats['confirmed_success'] > 0:
-            logger.info("✅ {0} settlements were successfully created.".format(stats['confirmed_success']))
+            logger.info("✅ {0} settlements were successfully created and DB updated.".format(stats['confirmed_success']))
         if stats['no_eligible'] > 0:
-            logger.info("ℹ️ {0} merchants had no eligible transactions.".format(stats['no_eligible']))
+            logger.info("ℹ️ {0} merchants had no eligible transactions. DB was NOT updated.".format(stats['no_eligible']))
         logger.info("=" * 60)
 
     except Exception as e:
